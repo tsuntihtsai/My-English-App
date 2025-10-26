@@ -45,3 +45,9 @@ dist/
 # Others
 .DS_Store
 Thumbs.db
+
+# 忽略所有 .env 檔案
+.env
+
+# 忽略 node_modules
+node_modules
