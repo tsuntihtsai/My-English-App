@@ -5,8 +5,7 @@ import { Mic, MicOff, RotateCcw, Image, FileText, Upload, Brain, Check } from 'l
 // 1. Gemini API Key (來自 .env)
 const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
 // 2. Gemini API URL (使用 1.5-flash 來支援圖片)
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
-
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent';
 // 3. [!!! 部署關鍵 !!!] 你的後端 TTS 伺服器 URL
 // 在 Zeabur 上，你需要將其設定為你後端服務的公開網址
 // 例如：'https://my-tts-backend.zeabur.app/api/tts'
