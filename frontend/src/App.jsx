@@ -3,8 +3,8 @@ import { Mic, MicOff, RotateCcw, Image, FileText, Upload, Brain, Check } from 'l
 
 // --- 環境變數 ---
 const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
-// [!!!] 根據您之前的 503 錯誤，我們暫時使用 1.5-flash，如果 1.5-pro 穩定，您可以換回去
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+// (我們使用 1.5-flash 來避免 503 Overload 錯誤)
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
 const TTS_API_URL = process.env.REACT_APP_TTS_API_URL || 'http://localhost:3001/api/tts';
 
 // --- 資料定義 (保持不變) ---
@@ -233,7 +233,7 @@ function App() {
     }
   }, [messages]);
 
-  // [!!! 關鍵修改 1 !!!]
+  // System Prompt (保持不變，因為 '...' 的指令是對的)
   const getSystemPrompt = useCallback(() => {
     let basePrompt = `You are ${teachers[teacher].name}, an enthusiastic English teacher.
 Student level: ${levels[level].name}.
@@ -242,7 +242,7 @@ Topic: ${topics[topic].name}.
 IMPORTANT: Speak naturally with emotion and personality!
 - Use contractions (I'm, don't, can't).
 - Add emotional words (wow, amazing, oh, hmm).
-- **[NEW] Use ellipses (...) to create natural pauses**, even in the middle of a sentence, to simulate thinking.
+- [NEW] Use ellipses (...) to create natural pauses, even in the middle of a sentence, to simulate thinking.
 - Show enthusiasm with exclamation marks!
 - Ask questions to engage the student.
 - Be friendly and encouraging.
@@ -294,7 +294,7 @@ Your behavior depends on the student's first message:
     return basePrompt;
   }, [teacher, level, topic, isRepeatMode, messages.length]);
 
-  // speakText (保持不變，因為修改都在 App.jsx)
+  // speakText (保持不變)
   const speakText = useCallback(async (text, sentiment = 'NEUTRAL') => {
     if (audioPlayer.current) {
         audioPlayer.current.pause();
@@ -351,7 +351,8 @@ Your behavior depends on the student's first message:
     }
   }, [teacher, level]);
 
-  // generateAIResponse (保持不變)
+  // [!!! 關鍵修改 2 !!!]
+  // 修正 generateAIResponse 中的解析 Bug
   const generateAIResponse = useCallback(async (messageContent, messageType = 'text', retryCount = 0) => {
     setIsLoading(true);
 
@@ -408,49 +409,68 @@ Your behavior depends on the student's first message:
       const data = await response.json();
 
       if (data?.candidates?.[0]?.content?.parts?.[0]?.text) {
-        let aiResponse = data.candidates[0].content.parts[0].text;
+        // 這是從 API 來的原始、"骯髒"的文字
+        const rawAiResponse = data.candidates[0].content.parts[0].text;
+        
         let sentiment = 'NEUTRAL';
+        let speechText = rawAiResponse; // 這是我們要傳送給 TTS (後端) 的文字
+        let displayText = rawAiResponse; // 這是我們要顯示在聊天室的文字
 
-        const sentimentMatch = aiResponse.match(/^\[(HAPPY|SAD|NEUTRAL|SURPRISE|SERIOUS|STRICT)\]\s*/i);
+        // 1. [修改] 找出*第一個*情感標籤，無論它在哪裡
+        const sentimentMatch = rawAiResponse.match(/\[(HAPPY|SAD|NEUTRAL|SURPRISE|SERIOUS|STRICT)\]/i);
         if (sentimentMatch) {
-          sentiment = sentimentMatch[1].toUpperCase();
-          aiResponse = aiResponse.replace(sentimentMatch[0], '');
+            sentiment = sentimentMatch[1].toUpperCase();
         }
 
-        const imagePromptMatch = aiResponse.match(/\[IMAGE_PROMPT\]\s*([\s\S]*)/i);
-        const articleSummaryMatch = aiResponse.match(/\[ARTICLE_SUMMARY\]\s*([\s\S]*)/i);
-        let speechText = aiResponse;
+        // 2. [修改] 從「顯示用」和「朗讀用」的文字中，清除*所有*情感標籤
+        // 注意：我們保留 `...`，因為後端會處理它
+        const cleanRegex = /\[(HAPPY|SAD|NEUTRAL|SURPRISE|SERIOUS|STRICT)\]/gi;
+        speechText = speechText.replace(cleanRegex, '');
+        displayText = displayText.replace(cleanRegex, '');
+
+        // 3. [修改] 同時也要清理 [IMAGE_PROMPT] 和 [ARTICLE_SUMMARY] 標籤
+        const imagePromptMatch = speechText.match(/\[IMAGE_PROMPT\]\s*([\s\S]*)/i);
+        const articleSummaryMatch = speechText.match(/\[ARTICLE_SUMMARY\]\s*([\s\S]*)/i);
 
         if (imagePromptMatch && messages.length === 0) {
             const aiImageDescription = imagePromptMatch[1].trim();
-            speechText = aiImageDescription;
+            // 清理顯示和朗讀的文字
+            displayText = aiImageDescription;
+            speechText = aiImageDescription; 
+
             const imageUrl = `https://picsum.photos/seed/${encodeURIComponent(aiImageDescription.slice(0, 10))}/300/200`;
             
             setMessages(prev => [...prev, 
                 { role: 'assistant', type: 'image', content: imageUrl },
-                { role: 'assistant', type: 'text', content: aiImageDescription, sentiment: sentiment }
+                { role: 'assistant', type: 'text', content: displayText, sentiment: sentiment }
             ]);
-            speakText(speechText, sentiment);
+            speakText(speechText, sentiment); // 傳送清理過的文字
 
         } else if (articleSummaryMatch && messages.length === 0) {
             const articleText = articleSummaryMatch[1].trim();
+            // 清理顯示和朗讀的文字
+            displayText = articleText;
             speechText = articleText;
-            setMessages(prev => [...prev, { role: 'assistant', type: 'article', content: articleText, sentiment: sentiment }]);
-            speakText(speechText, sentiment);
+            
+            setMessages(prev => [...prev, { role: 'assistant', type: 'article', content: displayText, sentiment: sentiment }]);
+            speakText(speechText, sentiment); // 傳送清理過的文字
 
         } else {
-            setMessages(prev => [...prev, { role: 'assistant', type: 'text', content: aiResponse, sentiment: sentiment }]);
-            speakText(aiResponse, sentiment);
+            // 常規文字回應
+            setMessages(prev => [...prev, { role: 'assistant', type: 'text', content: displayText, sentiment: sentiment }]);
+            speakText(speechText, sentiment); // 傳送清理過的文字
         }
 
+        // 5. [修改] 儲存「原始」的 AI 回應到歷史紀錄中
         conversationHistory.current.push({
           role: 'model',
-          parts: [{ text: data.candidates[0].content.parts[0].text }]
+          parts: [{ text: rawAiResponse }] // 儲存原始、未清理的文字
         });
 
-        const hasRepeatRequest = aiResponse.toLowerCase().includes('again') || 
-                                 aiResponse.toLowerCase().includes('repeat') || 
-                                 aiResponse.toLowerCase().includes('try that');
+        // 檢查是否需要重複 (使用清理過的文字)
+        const hasRepeatRequest = displayText.toLowerCase().includes('again') || 
+                                 displayText.toLowerCase().includes('repeat') || 
+                                 displayText.toLowerCase().includes('try that');
         
         if (hasRepeatRequest && (level === 'beginner' || level === 'intermediate')) {
           setIsRepeatMode(true);
