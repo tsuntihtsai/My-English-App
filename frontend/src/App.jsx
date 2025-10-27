@@ -2,8 +2,6 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Mic, MicOff, RotateCcw, Image, FileText, Upload, Brain, Check } from 'lucide-react';
 
 
-
-
 // --- 環境變數 ---
 const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
 // [!!!] 根據您之前的 503 錯誤，我們暫時使用 1.5-flash，如果 1.5-pro 穩定，您可以換回去
