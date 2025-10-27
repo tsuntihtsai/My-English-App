@@ -4,7 +4,7 @@ import { Mic, MicOff, RotateCcw, Image, FileText, Upload, Brain, Check } from 'l
 // --- 環境變數 ---
 const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
 // [!!!] 根據您之前的 503 錯誤，我們暫時使用 1.5-flash，如果 1.5-pro 穩定，您可以換回去
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 const TTS_API_URL = process.env.REACT_APP_TTS_API_URL || 'http://localhost:3001/api/tts';
 
 // --- 資料定義 (保持不變) ---
