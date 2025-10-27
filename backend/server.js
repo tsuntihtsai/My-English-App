@@ -4,111 +4,122 @@ const cors = require('cors');
 const { TextToSpeechClient } = require('@google-cloud/text-to-speech');
 
 const app = express();
-const port = process.env.PORT || 3001; // Zeabur 會自動設定 PORT
+const port = process.env.PORT || 3001;
 
-// --- [!!! 部署關鍵 !!!] ---
-// 初始化 Google TTS Client
+// --- [部署關鍵] ---
 let ttsClient;
 
-// 檢查 Zeabur 上的環境變數 (GCP_CREDENTIALS_JSON)
 if (process.env.GCP_CREDENTIALS_JSON) {
     try {
-        // 從環境變數中解析 JSON 字串
-        // 這是您必須在 Zeabur "Variables" 中設定的
         const credentials = JSON.parse(process.env.GCP_CREDENTIALS_JSON);
         ttsClient = new TextToSpeechClient({ credentials });
         console.log('TTS Client 成功從 GCP_CREDENTIALS_JSON (環境變數) 初始化。');
     } catch (e) {
         console.error('解析 GCP_CREDENTIALS_JSON 失敗:', e);
         console.error('請檢查 Zeabur 上的環境變數是否為完整的 JSON 內容。');
-        process.exit(1); // 啟動失敗
+        process.exit(1);
     }
 } 
-// 檢查本地開發用的 .env 檔案 (GOOGLE_APPLICATION_CREDENTIALS)
 else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    // 使用檔案路徑初始化 (僅供本地測試)
     ttsClient = new TextToSpeechClient();
     console.log('TTS Client 成功從 GOOGLE_APPLICATION_CREDENTIALS (本地檔案) 初始化。');
 } 
-// 錯誤
 else {
     console.error('錯誤：未找到 Google Cloud 憑證。');
     console.error('請設定 GCP_CREDENTIALS_JSON (用於部署) 或 GOOGLE_APPLICATION_CREDENTIALS (用於本地)。');
-    process.exit(1); // 啟動失敗
+    process.exit(1);
 }
-// --- [!!! 部署關鍵結束 !!!] ---
+// --- [部署關鍵結束] ---
 
 
-app.use(cors()); // 允許來自 React App (不同網域) 的請求
-app.use(express.json()); // 解析 JSON body
+app.use(cors());
+app.use(express.json());
 
 /**
- * 根據情緒標籤和性別建立 SSML
- * 這就是實現「真正」情緒的關鍵！
- * 
- * 
+ * [!!! 關鍵修改 2 !!!]
+ * 使用相對停頓 (strength) 來取代固定時間 (time)
  */
-function buildSsml(text, sentiment, voiceGender) {
-    let voiceName = 'en-US-Neural2-F'; // 預設: Emma (Female)
-    let rate = "1.0";
-    let pitch = "0.0st";
+function buildSsml(text, sentiment, voiceGender, level = 'intermediate') {
+    let voiceName = (voiceGender === 'Male') ? 'en-US-Neural2-D' : 'en-US-Neural2-F';
 
-    if (voiceGender === 'Male') {
-        voiceName = 'en-US-Neural2-D'; // James / Alex (Male)
+    // 1. 設定基礎語速 (根據 Level)
+    let baseRate = 1.0;
+    if (level === 'beginner') {
+        baseRate = 0.85; // 初級: 速度 0.85x
+    } else if (level === 'intermediate') {
+        baseRate = 0.95; // 中級: 速度 0.95x
     }
+
+    // 2. 設定情緒調節
+    let rateModifier = 1.0;
+    let pitch = "0.0st";
 
     switch (sentiment) {
         case 'HAPPY':
-            rate = "1.1";   // 語速稍快
-            pitch = "+2.0st"; // 音調稍高
+            rateModifier = 1.1;
+            pitch = "+2.0st";
             break;
         case 'SAD':
-            rate = "0.85";  // 語速慢
-            pitch = "-3.0st"; // 音調低
+            rateModifier = 0.9;
+            pitch = "-3.0st";
             break;
         case 'SURPRISE':
-            rate = "1.2";   // 語速快
-            pitch = "+4.0st"; // 音調高
+            rateModifier = 1.15;
+            pitch = "+4.0st";
             break;
         case 'SERIOUS':
-            rate = "0.9";   // 語速稍慢
-            pitch = "-1.0st"; // 音調稍低
+            rateModifier = 0.95;
+            pitch = "-1.0st";
             break;
         case 'STRICT':
-            rate = "0.8";   // 語速慢 (一字一句)
-            pitch = "-2.0st"; // 音調低 (嚴厲)
+            rateModifier = 0.9;
+            pitch = "-2.0st";
             break;
         case 'NEUTRAL':
         default:
-            // 保持預設
             break;
     }
+    
+    const finalRate = (baseRate * rateModifier).toFixed(2);
 
-    // 清理文字中的非法 SSML 字符，避免 API 錯誤
-    const escapedText = text
+    // 4. [修改] 處理文字並插入停頓 (斷句)
+    let ssmlText = text
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
-        .replace(/'/g, '&quot;')
+        .replace(/"/g, '&quot;')
         .replace(/'/g, '&apos;');
 
-    return `<speak><prosody rate="${rate}" pitch="${pitch}">${escapedText}</prosody></speak>`;
+    // 5. [修改] 使用 strength 標籤 (更自然)
+    // 順序很重要：先處理最長的 '...'，再處理單個標點
+    ssmlText = ssmlText
+        // 刪節號 (AI 老師的思考停頓): 中等停頓
+        .replace(/\.\.\./g, ' <break strength="medium"/>')
+        // 句號、問號、驚嘆號: 中等停頓 (換氣)
+        .replace(/\./g, ' <break strength="medium"/>')
+        .replace(/\?/g, ' <break strength="medium"/>')
+        .replace(/!/g, ' <break strength="medium"/>')
+        // 逗號: 弱停頓 (短暫換氣)
+        .replace(/,/g, ' <break strength="weak"/>');
+
+    // 6. 返回最終的 SSML
+    return `<speak><prosody rate="${finalRate}" pitch="${pitch}">${ssmlText}</prosody></speak>`;
 }
 
-// API 端點：/api/tts
+
+// API 端點：/api/tts (保持不變)
 app.post('/api/tts', async (req, res) => {
     try {
-        const { text, sentiment, voiceGender } = req.body;
+        const { text, sentiment, voiceGender, level } = req.body;
 
         if (!text || !sentiment || !voiceGender) {
             return res.status(400).send('缺少 text, sentiment 或 voiceGender');
         }
 
-        const ssml = buildSsml(text, sentiment, voiceGender);
+        const ssml = buildSsml(text, sentiment, voiceGender, level);
 
         const request = {
             input: { ssml: ssml },
-            // 根據性別選擇高品質的 Neural2 語音
             voice: { 
                 languageCode: 'en-US', 
                 name: (voiceGender === 'Male') ? 'en-US-Neural2-D' : 'en-US-Neural2-F'
@@ -116,10 +127,8 @@ app.post('/api/tts', async (req, res) => {
             audioConfig: { audioEncoding: 'MP3' },
         };
 
-        // 呼叫 Google TTS API
         const [response] = await ttsClient.synthesizeSpeech(request);
         
-        // 將 MP3 音檔回傳給前端
         res.set('Content-Type', 'audio/mpeg');
         res.send(response.audioContent);
 
@@ -129,14 +138,12 @@ app.post('/api/tts', async (req, res) => {
     }
 });
 
-// 健康檢查端點：/
-// 這是您在瀏覽器中測試後端網址時會看到的
+// 健康檢查端點：/ (保持不變)
 app.get('/', (req, res) => {
     res.send('English Talk TTS Backend is running.');
 });
 
-// 啟動伺服器
+// 啟動伺服器 (保持不變)
 app.listen(port, () => {
-    // 這行訊息應該會出現在您的 Zeabur "Logs" 中
     console.log(`English Talk - 後端語音伺服器正在 http://localhost:${port} 運行`);
 });

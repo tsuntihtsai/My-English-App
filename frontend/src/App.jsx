@@ -2,16 +2,12 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Mic, MicOff, RotateCcw, Image, FileText, Upload, Brain, Check } from 'lucide-react';
 
 // --- 環境變數 ---
-// 1. Gemini API Key (來自 .env)
 const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
-// 2. Gemini API URL (使用 1.5-flash 來支援圖片)
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
-// 3. [!!! 部署關鍵 !!!] 你的後端 TTS 伺服器 URL
-// 在 Zeabur 上，你需要將其設定為你後端服務的公開網址
-// 例如：'https://my-tts-backend.zeabur.app/api/tts'
-const TTS_API_URL = process.env.REACT_APP_TTS_API_URL || 'http://localhost:3001/api/tts'; // 本地開發時 fallback 到 localhost
+// [!!!] 根據您之前的 503 錯誤，我們暫時使用 1.5-flash，如果 1.5-pro 穩定，您可以換回去
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+const TTS_API_URL = process.env.REACT_APP_TTS_API_URL || 'http://localhost:3001/api/tts';
 
-// --- 資料定義 ---
+// --- 資料定義 (保持不變) ---
 const teachers = {
   teacher1: {
     name: 'Emma',
@@ -38,7 +34,6 @@ const teachers = {
     voice: 'Male'
   }
 };
-
 const topics = {
   business: { name: 'Business', icon: '💼', desc: 'Business communication' },
   travel: { name: 'Travel', icon: '✈️', desc: 'Travel and tourism' },
@@ -47,7 +42,6 @@ const topics = {
   presentation: { name: 'Presentation', icon: '📊', desc: 'English presentation practice' },
   freeTalk: { name: '自由對談 (Free Talk)', icon: '💬', desc: 'AI老師隨機圖片/文章討論' }
 };
-
 const levels = {
   beginner: { name: '初級', level: 'Beginner' },
   intermediate: { name: '中級', level: 'Intermediate' },
@@ -55,7 +49,7 @@ const levels = {
   fluent: { name: '流暢', level: 'Fluent' }
 };
 
-// --- 樣式定義 ---
+// --- 樣式定義 (保持不變) ---
 const styles = {
     homeScreen: {
         background: 'linear-gradient(135deg, #3b82f6 0%, #9333ea 100%)',
@@ -195,7 +189,7 @@ const styles = {
     }
 };
 
-// --- 輔助函式 ---
+// --- 輔助函式 (保持不變) ---
 const fileToBase64 = (file) => new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
@@ -231,16 +225,15 @@ function App() {
   const conversationHistory = useRef([]);
   const correctAttempts = useRef(0);
   const chatMessagesRef = useRef(null);
-  const audioPlayer = useRef(null); // 用於控制 TTS 音訊
+  const audioPlayer = useRef(null);
 
-  // 自動捲動
   useEffect(() => {
     if (chatMessagesRef.current) {
       chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
     }
   }, [messages]);
 
-  // 系統提示 (System Prompt)
+  // [!!! 關鍵修改 1 !!!]
   const getSystemPrompt = useCallback(() => {
     let basePrompt = `You are ${teachers[teacher].name}, an enthusiastic English teacher.
 Student level: ${levels[level].name}.
@@ -249,6 +242,7 @@ Topic: ${topics[topic].name}.
 IMPORTANT: Speak naturally with emotion and personality!
 - Use contractions (I'm, don't, can't).
 - Add emotional words (wow, amazing, oh, hmm).
+- **[NEW] Use ellipses (...) to create natural pauses**, even in the middle of a sentence, to simulate thinking.
 - Show enthusiasm with exclamation marks!
 - Ask questions to engage the student.
 - Be friendly and encouraging.
@@ -257,7 +251,7 @@ Instructions:
 1. Speak naturally with feeling.
 2. Keep responses to 1-2 sentences.
 
-// 情感標籤指令 (已更新)
+// 情感標籤指令
 IMPORTANT: Based on the sentiment of your response, prefix it with an emotional tag:
 - [HAPPY]: Positive, encouraging, or exciting.
 - [SAD]: Empathetic, slightly sad, or regretful.
@@ -266,55 +260,46 @@ IMPORTANT: Based on the sentiment of your response, prefix it with an emotional 
 - [SERIOUS]: For serious topics, factual explanations, or gentle corrections.
 - [STRICT]: When making a firm, direct grammar/wording correction, especially on repeated mistakes.
 
-Example (Encouraging): "[HAPPY] Wow, that's a fantastic idea! I love your creativity!"
-Example (Correction 1 - Kind): "[SERIOUS] Good try! Just a small fix: say 'I *saw* two cats' instead of 'I *see* two cats'. Can you say that again?"
+Example (Natural Pause): "[HAPPY] Wow... that's a fantastic idea! I love your creativity!"
+Example (Correction 1 - Kind): "[SERIOUS] Good try! Just a small fix... say 'I *saw* two cats' instead of 'I *see* two cats'. Can you say that again?"
 
 ${(level === 'beginner' || level === 'intermediate') && !isRepeatMode ? `
 3. Check every sentence for grammar and wording errors.
 - If it's a small mistake, be encouraging: "[SERIOUS] Almost there! Just say 'I *am* happy' instead of 'I *is* happy'. Can you try that again?"
-- If it's a repeated or more significant mistake, be more firm: "[STRICT] Hmm, that's not quite right. Remember, we say 'He *goes* to the store,' not 'He *go*'. Please try the sentence again."
+- If it's a repeated or more significant mistake, be more firm: "[STRICT] Hmm... that's not quite right. Remember, we say 'He *goes* to the store,' not 'He *go*'. Please try the sentence again."
 ` : ''}
 ${isRepeatMode ? `
 The student is repeating their sentence. Evaluate if it is now correct (80% accuracy).
 If correct, praise them: "[HAPPY] Excellent! You got it right! Now, let's continue..."
-If still has errors, encourage them: "[STRICT] Not quite. Listen closely: 'She *doesn't* like coffee'. Try one more time."
+If still has errors, encourage them: "[STRICT] Not quite. Listen closely... 'She *doesn't* like coffee'. Try one more time."
 ` : ''}
 
-// [修改] Free Talk 模式的特殊指令 - 包含 AI 主導和使用者上傳
+// Free Talk 模式 (保持不變)
 ${topic === 'freeTalk' && messages.length === 0 ? `
 SPECIAL INSTRUCTION FOR FREE TALK (Initial Message):
 Your behavior depends on the student's first message:
 
 1.  **If the user message is "Initiate Free Talk Session" (AI Choice):**
-    This means the user wants YOU to provide a topic.
     You MUST choose ONE of the following options and prefix your response with the exact tag:
     -   Generate Image Prompt: \`[IMAGE_PROMPT]\` (e.g., "[HAPPY][IMAGE_PROMPT]A cozy coffee shop with steam rising from a mug. What do you see in this picture?")
     -   Generate Article Summary: \`[ARTICLE_SUMMARY]\` (e.g., "[HAPPY][ARTICLE_SUMMARY]Did you know... What do you think about that?")
 
 2.  **If the user message contains "image I've uploaded" or "article I've uploaded" (User Choice):**
-    This means the user has provided their own content (the image/text is included in their message).
-    Your job is to:
     -   Acknowledge the content (e.g., "Wow, what a cool picture!" or "Thanks for sharing this article.")
     -   Make one brief observation about it.
     -   Ask an open-ended question to start the discussion.
-    -   Use an enthusiastic [HAPPY] or [NEUTRAL] tag.
-    Example (Image): "[HAPPY] That's a beautiful photo! It looks like a very peaceful beach. What time of day do you think it was taken?"
-    Example (Article): "[NEUTRAL] Hmm, that's an interesting topic about... [mention topic]. What's the main point you found most surprising?"
+    Example (Image): "[HAPPY] That's a beautiful photo! It looks like a very peaceful beach. What time of day... do you think it was taken?"
 ` : ''}
 `;
     return basePrompt;
   }, [teacher, level, topic, isRepeatMode, messages.length]);
 
-  // [!!! 關鍵修改 !!!]
-  // speakText 現在呼叫你的後端伺服器來取得高品質 MP3
+  // speakText (保持不變，因為修改都在 App.jsx)
   const speakText = useCallback(async (text, sentiment = 'NEUTRAL') => {
-    // 如果目前有音訊正在播放，先停止它
     if (audioPlayer.current) {
         audioPlayer.current.pause();
         audioPlayer.current.currentTime = 0;
     }
-
-    // 設置為「正在聆聽 (AI 說話中)」
     setIsListening(true); 
 
     try {
@@ -329,6 +314,7 @@ Your behavior depends on the student's first message:
                 text: text,
                 sentiment: sentiment,
                 voiceGender: voiceGender,
+                level: level
             }),
         });
 
@@ -341,10 +327,11 @@ Your behavior depends on the student's first message:
         const audioUrl = URL.createObjectURL(audioBlob);
         
         const audio = new Audio(audioUrl);
-        audioPlayer.current = audio; // 存儲參照
+        audio.volume = 1.0; 
+        audioPlayer.current = audio;
 
         audio.onended = () => {
-            setIsListening(false); // 播放結束
+            setIsListening(false);
             URL.revokeObjectURL(audioUrl);
             audioPlayer.current = null;
         };
@@ -360,15 +347,14 @@ Your behavior depends on the student's first message:
     } catch (error) {
         console.error('speakText 失敗:', error);
         alert(`無法播放語音: ${error.message}. 請檢查後端伺服器 (TTS_API_URL) 是否正在運行且設定正確。`);
-        setIsListening(false); // 發生錯誤時重置
+        setIsListening(false);
     }
-  }, [teacher]); // 依賴項是 teacher (為了 voiceGender)
+  }, [teacher, level]);
 
-  // AI 回應邏輯
+  // generateAIResponse (保持不變)
   const generateAIResponse = useCallback(async (messageContent, messageType = 'text', retryCount = 0) => {
-    setIsLoading(true); // AI 正在思考
+    setIsLoading(true);
 
-    // 1. 將使用者訊息加入歷史
     if (retryCount === 0) {
         if (messageType === 'image') {
             conversationHistory.current.push({
@@ -392,7 +378,6 @@ Your behavior depends on the student's first message:
     }
 
     try {
-      // 2. 呼叫 Gemini API
       if (!GEMINI_API_KEY) {
           throw new Error("Gemini API Key is not configured. Please set REACT_APP_GEMINI_API_KEY.");
       }
@@ -414,12 +399,14 @@ Your behavior depends on the student's first message:
             await new Promise(res => setTimeout(res, 2000));
             return generateAIResponse(messageContent, messageType, retryCount + 1);
         }
+        if (response.status === 503) {
+            throw new Error(`API Error: 503 - The model is overloaded. Please try again later.`);
+        }
         throw new Error(`API Error: ${response.status} - ${errorData.error?.message || 'Unknown API error'}`);
       }
 
       const data = await response.json();
 
-      // 3. 解析 Gemini 回應
       if (data?.candidates?.[0]?.content?.parts?.[0]?.text) {
         let aiResponse = data.candidates[0].content.parts[0].text;
         let sentiment = 'NEUTRAL';
@@ -427,14 +414,13 @@ Your behavior depends on the student's first message:
         const sentimentMatch = aiResponse.match(/^\[(HAPPY|SAD|NEUTRAL|SURPRISE|SERIOUS|STRICT)\]\s*/i);
         if (sentimentMatch) {
           sentiment = sentimentMatch[1].toUpperCase();
-          aiResponse = aiResponse.replace(sentimentMatch[0], ''); // 移除標籤
+          aiResponse = aiResponse.replace(sentimentMatch[0], '');
         }
 
         const imagePromptMatch = aiResponse.match(/\[IMAGE_PROMPT\]\s*([\s\S]*)/i);
         const articleSummaryMatch = aiResponse.match(/\[ARTICLE_SUMMARY\]\s*([\s\S]*)/i);
         let speechText = aiResponse;
 
-        // 4. 根據回應類型顯示 UI 並播放語音
         if (imagePromptMatch && messages.length === 0) {
             const aiImageDescription = imagePromptMatch[1].trim();
             speechText = aiImageDescription;
@@ -457,7 +443,6 @@ Your behavior depends on the student's first message:
             speakText(aiResponse, sentiment);
         }
 
-        // 5. 更新對話歷史和狀態
         conversationHistory.current.push({
           role: 'model',
           parts: [{ text: data.candidates[0].content.parts[0].text }]
@@ -493,12 +478,11 @@ Your behavior depends on the student's first message:
       alert(`Error: ${error.message || 'Cannot connect to Gemini API'}. Please check your API key and network connection.`);
       conversationHistory.current.pop();
     } finally {
-      setIsLoading(false); // AI 思考結束
-      // setIsListening(false) 由 speakText 的 audio.onended 控制
+      setIsLoading(false);
     }
   }, [getSystemPrompt, speakText, level, messages.length]);
 
-  // 開始聊天
+  // startChat (保持不變)
   const startChat = useCallback(async (uploadData) => {
     if (audioPlayer.current) {
         audioPlayer.current.pause();
@@ -540,14 +524,14 @@ Your behavior depends on the student's first message:
     }
   }, [topic, generateAIResponse]);
 
-  // 開始錄音
+  // startRecording (保持不變)
   const startRecording = useCallback(async () => {
     if (isRecording || isListening || isLoading) return;
     
     if (audioPlayer.current) {
         audioPlayer.current.pause();
         audioPlayer.current.currentTime = 0;
-        setIsListening(false); // 手動重置
+        setIsListening(false);
     }
     
     setIsRecording(true);
@@ -574,8 +558,6 @@ Your behavior depends on the student's first message:
         if (transcript.trim()) {
           setMessages(prev => [...prev, { role: 'user', type: 'text', content: transcript }]);
           generateAIResponse(transcript, 'text');
-        } else {
-           // 不處理空錄音
         }
         setIsRecording(false);
       };
@@ -585,7 +567,7 @@ Your behavior depends on the student's first message:
         if (event.error === 'not-allowed') {
           alert("Microphone access denied. Please allow microphone permissions in your browser settings.");
         } else if (event.error === 'no-speech') {
-           // 不處理 'no-speech'
+           // 不處理
         } else {
           alert(`Speech recognition error: ${event.error}.`);
         }
@@ -605,7 +587,7 @@ Your behavior depends on the student's first message:
     }
   }, [isRecording, isListening, isLoading, generateAIResponse]);
 
-  // --- 畫面渲染 ---
+  // --- 畫面渲染 (保持不變) ---
 
   if (screen === 'home') {
     return (
@@ -665,7 +647,6 @@ Your behavior depends on the student's first message:
         <h2 style={{ fontSize: '28px', fontWeight: 'bold', marginBottom: '10px' }}>Free Talk Options</h2>
         <p style={{ fontSize: '16px', color: '#6b7280', marginBottom: '20px' }}>How would you like to start?</p>
 
-        {/* 選項 1: AI 選擇 */}
         <div 
           style={{ ...styles.uploadOption, ...(freeTalkOption === 'ai' ? styles.uploadOptionSelected : {}) }}
           onClick={() => setFreeTalkOption('ai')}
@@ -677,7 +658,6 @@ Your behavior depends on the student's first message:
           </div>
         </div>
 
-        {/* 選項 2: 上傳圖片 */}
         <div 
           style={{ ...styles.uploadOption, ...(freeTalkOption === 'image' ? styles.uploadOptionSelected : {}) }}
           onClick={() => setFreeTalkOption('image')}
@@ -699,7 +679,6 @@ Your behavior depends on the student's first message:
           </div>
         )}
 
-        {/* 選項 3: 貼上文章 */}
         <div 
           style={{ ...styles.uploadOption, ...(freeTalkOption === 'text' ? styles.uploadOptionSelected : {}) }}
           onClick={() => setFreeTalkOption('text')}
@@ -721,12 +700,11 @@ Your behavior depends on the student's first message:
           </div>
         )}
 
-        {/* 確認按鈕 */}
         <button
           style={{ ...styles.button, ...styles.primaryButton, marginTop: '30px', background: 'linear-gradient(135deg, #3b82f6 0%, #9333ea 100%)', color: 'white' }}
           onClick={() => {
             if (freeTalkOption === 'ai') {
-              startChat(null); // AI 選擇
+              startChat(null);
             } else if (freeTalkOption === 'image') {
               if (userFile) startChat({ type: 'image', file: userFile });
               else alert("Please select an image file.");
@@ -749,7 +727,6 @@ Your behavior depends on the student's first message:
       <div style={styles.chatScreen}>
         <div style={styles.chatHeader}>
           <button style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '16px', fontWeight: 'bold' }} onClick={() => {
-            // 停止語音並返回
             if (audioPlayer.current) {
                 audioPlayer.current.pause();
                 audioPlayer.current = null;
